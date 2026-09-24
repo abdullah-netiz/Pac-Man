@@ -66,23 +66,71 @@ def depthFirstSearch(problem: SearchProblem):
     """
     Search the deepest nodes in the search tree first.
 
-    Your search algorithm needs to return a list of actions that reaches the
-    goal. Make sure to implement a graph search algorithm.
+    Graph-search DFS using a LIFO Stack as the frontier.
+    An explicit explored set prevents re-expanding already-visited states,
+    guaranteeing termination even in cyclic graphs.
 
-    To get started, you might want to try some of these simple commands to
-    understand the search problem that is being passed in:
-
-    print("Start:", problem.getStartState())
-    print("Is the start a goal?", problem.isGoalState(problem.getStartState()))
-    print("Start's successors:", problem.getSuccessors(problem.getStartState()))
+    Successors are pushed in reverse order (West→South→East→North) so that
+    when popped they follow the mandatory expansion order: North→East→South→West.
     """
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    frontier = util.Stack()
+    start = problem.getStartState()
+    # Each entry on the stack: (state, actions_to_reach_state)
+    frontier.push((start, []))
+    explored = set()
+
+    while not frontier.isEmpty():
+        state, actions = frontier.pop()
+
+        # Skip if already fully explored
+        if state in explored:
+            continue
+
+        # Mark as explored upon expansion
+        explored.add(state)
+
+        if problem.isGoalState(state):
+            return actions
+
+        # getSuccessors returns [North, South, East, West] by default.
+        # Push in reversed order so North is on top and popped first.
+        for successor, action, stepCost in reversed(problem.getSuccessors(state)):
+            if successor not in explored:
+                frontier.push((successor, actions + [action]))
+
+    return []
 
 def breadthFirstSearch(problem: SearchProblem):
-    """Search the shallowest nodes in the search tree first."""
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    """
+    Search the shallowest nodes in the search tree first.
+
+    Graph-search BFS using a FIFO Queue as the frontier.
+    States are added to 'enqueued' as soon as they enter the queue, so they
+    are never re-enqueued regardless of whether they are in the frontier or
+    the explored set.  This guarantees the shallowest (optimal) path is found
+    for any unweighted (uniform step-cost) graph.
+    """
+    frontier = util.Queue()
+    start = problem.getStartState()
+
+    # enqueued tracks every state that has ever entered the queue,
+    # preventing re-enqueuing states already in the frontier or expanded.
+    enqueued = set()
+    enqueued.add(start)
+    frontier.push((start, []))
+
+    while not frontier.isEmpty():
+        state, actions = frontier.pop()
+
+        if problem.isGoalState(state):
+            return actions
+
+        for successor, action, stepCost in problem.getSuccessors(state):
+            if successor not in enqueued:
+                enqueued.add(successor)
+                frontier.push((successor, actions + [action]))
+
+    return []
 
 def uniformCostSearch(problem: SearchProblem):
     """Search the node of least total cost first."""
@@ -98,8 +146,31 @@ def nullHeuristic(state, problem=None):
 
 def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
     """Search the node that has the lowest combined cost and heuristic first."""
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    frontier = util.PriorityQueue()
+    start_state = problem.getStartState()
+    frontier.push((start_state, [], 0), heuristic(start_state, problem))
+
+    best_cost = {start_state: 0}
+
+    while not frontier.isEmpty():
+        current_state, actions, cost_so_far = frontier.pop()
+
+        if cost_so_far > best_cost[current_state]:
+            continue
+
+        if problem.isGoalState(current_state):
+            return actions
+
+        for successor, action, step_cost in problem.getSuccessors(current_state):
+            new_cost = cost_so_far + step_cost
+
+            if successor not in best_cost or new_cost < best_cost[successor]:
+                best_cost[successor] = new_cost
+                new_actions = actions + [action]
+                priority = new_cost + heuristic(successor, problem)
+                frontier.push((successor, new_actions, new_cost), priority)
+
+    return []
 
 
 # Abbreviations
