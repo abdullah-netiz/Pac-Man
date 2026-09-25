@@ -484,27 +484,39 @@ def foodHeuristic(state: Tuple[Tuple, List[List]], problem: FoodSearchProblem):
     Subsequent calls to this heuristic can access
     problem.heuristicInfo['wallCount']
     """
-    position, foodGrid = state
-    foodList = foodGrid.asList()
-    if not foodList:
+    currentPosition, remainingFood = state
+
+    foods = remainingFood.asList()
+
+    if len(foods) == 0:
         return 0
 
-    # Cache maze distances between point pairs so repeated heuristic calls
-    # don't re-run BFS for the same two points.
-    if 'distanceCache' not in problem.heuristicInfo:
-        problem.heuristicInfo['distanceCache'] = {}
-    cache = problem.heuristicInfo['distanceCache']
+    if "distances" not in problem.heuristicInfo:
+        problem.heuristicInfo["distances"] = {}
 
-    def getDistance(p1, p2):
-        key = (p1, p2) if p1 <= p2 else (p2, p1)
-        if key not in cache:
-            cache[key] = mazeDistance(p1, p2, problem.startingGameState)
-        return cache[key]
+    distances = problem.heuristicInfo["distances"]
 
-    # Distance to the farthest remaining food dot is admissible (it's a real
-    # maze distance Pacman must cover to reach that dot) and consistent
-    # (it's a true shortest-path cost, so it changes by at most 1 per step).
-    return max(getDistance(position, food) for food in foodList)
+    def distanceBetween(a, b):
+        pair = tuple(sorted((a, b)))
+
+        if pair not in distances:
+            distances[pair] = mazeDistance(
+                a,
+                b,
+                problem.startingGameState
+            )
+
+        return distances[pair]
+
+    largestDistance = 0
+
+    for foodPosition in foods:
+        d = distanceBetween(currentPosition, foodPosition)
+
+        if d > largestDistance:
+            largestDistance = d
+
+    return largestDistance
 
 class ClosestDotSearchAgent(SearchAgent):
     "Search for all food using a sequence of searches"
@@ -528,15 +540,13 @@ class ClosestDotSearchAgent(SearchAgent):
         Returns a path (a list of actions) to the closest dot, starting from
         gameState.
         """
-        # Here are some useful elements of the startState
-        startPosition = gameState.getPacmanPosition()
-        food = gameState.getFood()
-        walls = gameState.getWalls()
-        problem = AnyFoodSearchProblem(gameState)
+        pacmanPos = gameState.getPacmanPosition()
+        foodGrid = gameState.getFood()
 
-        # BFS is optimal on this unit-cost maze, so it returns a path to the
-        # *nearest* food dot, not just any reachable dot.
-        return search.bfs(problem)
+        searchProblem = AnyFoodSearchProblem(gameState)
+
+        path = search.bfs(searchProblem)
+        return path
 
 class AnyFoodSearchProblem(PositionSearchProblem):
     """
@@ -569,10 +579,8 @@ class AnyFoodSearchProblem(PositionSearchProblem):
         The state is Pacman's position. Fill this in with a goal test that will
         complete the problem definition.
         """
-        x,y = state
-
-        # Goal is reached as soon as Pacman stands on a cell containing food.
-        return self.food[x][y]
+        row, col = state
+        return self.food[row][col]
 
 def mazeDistance(point1: Tuple[int, int], point2: Tuple[int, int], gameState: pacman.GameState) -> int:
     """
