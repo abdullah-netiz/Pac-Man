@@ -8,56 +8,6 @@ Pacman agents (in searchAgents.py).
 """
 
 import util
-import csv
-import os
-from datetime import datetime
-
-
-class SearchLogger:
-    FIELDNAMES = [
-        "iteration", "expanded_state", "parent", "action",
-        "generated_successors", "frontier_before", "frontier_after",
-        "explored", "g", "h", "f",
-    ]
-
-    def __init__(self, algorithm_name):
-        os.makedirs("evidence", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        self.path = os.path.join("evidence", f"{algorithm_name}_{timestamp}.csv")
-        self._file = open(self.path, "w", newline="")
-        self._writer = csv.DictWriter(self._file, fieldnames=self.FIELDNAMES)
-        self._writer.writeheader()
-        self.iteration = 0
-
-    def log(self, expanded_state, parent, action, generated_successors,
-            frontier_before, frontier_after, explored, g, h):
-        self.iteration += 1
-        self._writer.writerow({
-            "iteration": self.iteration,
-            "expanded_state": expanded_state,
-            "parent": parent,
-            "action": action,
-            "generated_successors": generated_successors,
-            "frontier_before": frontier_before,
-            "frontier_after": frontier_after,
-            "explored": explored,
-            "g": g,
-            "h": h,
-            "f": g + h,
-        })
-
-    def close(self):
-        self._file.close()
-
-
-def _frontier_states(frontier):
-    if hasattr(frontier, "heap"):
-        return [entry[2][0] for entry in frontier.heap]
-    if hasattr(frontier, "list"):
-        return [entry[0] for entry in frontier.list]
-    return []
-
-
 
 class SearchProblem:
     """
@@ -125,38 +75,29 @@ def depthFirstSearch(problem: SearchProblem):
     """
     frontier = util.Stack()
     start = problem.getStartState()
+    # Each entry on the stack: (state, actions_to_reach_state)
     frontier.push((start, []))
     explored = set()
-    logger = SearchLogger("dfs")
-    parent_of = {start: None}
 
     while not frontier.isEmpty():
         state, actions = frontier.pop()
 
+        # Skip if already fully explored
         if state in explored:
             continue
 
-        frontier_before = _frontier_states(frontier)
+        # Mark as explored upon expansion
         explored.add(state)
-        successors = problem.getSuccessors(state)
 
         if problem.isGoalState(state):
-            logger.log(state, parent_of.get(state), actions[-1] if actions else None,
-                       [s for s, a, c in successors], frontier_before,
-                       _frontier_states(frontier), len(explored), len(actions), 0)
-            logger.close()
             return actions
 
-        for successor, action, stepCost in reversed(successors):
+        # getSuccessors returns [North, South, East, West] by default.
+        # Push in reversed order so North is on top and popped first.
+        for successor, action, stepCost in reversed(problem.getSuccessors(state)):
             if successor not in explored:
-                parent_of.setdefault(successor, state)
                 frontier.push((successor, actions + [action]))
 
-        logger.log(state, parent_of.get(state), actions[-1] if actions else None,
-                   [s for s, a, c in successors], frontier_before,
-                   _frontier_states(frontier), len(explored), len(actions), 0)
-
-    logger.close()
     return []
 
 def breadthFirstSearch(problem: SearchProblem):
@@ -171,35 +112,24 @@ def breadthFirstSearch(problem: SearchProblem):
     """
     frontier = util.Queue()
     start = problem.getStartState()
+
+    # enqueued tracks every state that has ever entered the queue,
+    # preventing re-enqueuing states already in the frontier or expanded.
     enqueued = set()
     enqueued.add(start)
     frontier.push((start, []))
-    logger = SearchLogger("bfs")
-    parent_of = {start: None}
 
     while not frontier.isEmpty():
         state, actions = frontier.pop()
-        frontier_before = _frontier_states(frontier)
-        successors = problem.getSuccessors(state)
 
         if problem.isGoalState(state):
-            logger.log(state, parent_of.get(state), actions[-1] if actions else None,
-                       [s for s, a, c in successors], frontier_before,
-                       _frontier_states(frontier), len(enqueued), len(actions), 0)
-            logger.close()
             return actions
 
-        for successor, action, stepCost in successors:
+        for successor, action, stepCost in problem.getSuccessors(state):
             if successor not in enqueued:
                 enqueued.add(successor)
-                parent_of.setdefault(successor, state)
                 frontier.push((successor, actions + [action]))
 
-        logger.log(state, parent_of.get(state), actions[-1] if actions else None,
-                   [s for s, a, c in successors], frontier_before,
-                   _frontier_states(frontier), len(enqueued), len(actions), 0)
-
-    logger.close()
     return []
 
 def uniformCostSearch(problem: SearchProblem):
@@ -212,12 +142,11 @@ def uniformCostSearch(problem: SearchProblem):
     """
     frontier = util.PriorityQueue()
     start = problem.getStartState()
+    # Item on the queue is the state; path and g-cost are stored alongside.
     frontier.push(start, 0)
     best_g = {start: 0}
     best_actions = {start: []}
     explored = set()
-    logger = SearchLogger("ucs")
-    parent_of = {start: None}
 
     while not frontier.isEmpty():
         state = frontier.pop()
@@ -225,33 +154,21 @@ def uniformCostSearch(problem: SearchProblem):
 
         if state in explored:
             continue
-
-        frontier_before = _frontier_states(frontier)
         explored.add(state)
-        successors = problem.getSuccessors(state)
 
         if problem.isGoalState(state):
-            logger.log(state, parent_of.get(state), best_actions[state][-1] if best_actions[state] else None,
-                       [s for s, a, c in successors], frontier_before,
-                       _frontier_states(frontier), len(explored), cost_so_far, 0)
-            logger.close()
             return best_actions[state]
 
-        for successor, action, step_cost in successors:
+        for successor, action, step_cost in problem.getSuccessors(state):
             if successor in explored:
                 continue
             new_cost = cost_so_far + step_cost
             if successor not in best_g or new_cost < best_g[successor]:
                 best_g[successor] = new_cost
                 best_actions[successor] = best_actions[state] + [action]
-                parent_of[successor] = state
+                # update() decreases priority if successor is already on the fringe
                 frontier.update(successor, new_cost)
 
-        logger.log(state, parent_of.get(state), best_actions[state][-1] if best_actions[state] else None,
-                   [s for s, a, c in successors], frontier_before,
-                   _frontier_states(frontier), len(explored), cost_so_far, 0)
-
-    logger.close()
     return []
 
 def nullHeuristic(state, problem=None):
@@ -296,10 +213,8 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
     frontier = util.PriorityQueue()
     start_state = problem.getStartState()
     frontier.push((start_state, [], 0), heuristic(start_state, problem))
+
     best_cost = {start_state: 0}
-    logger = SearchLogger("astar")
-    parent_of = {start_state: None}
-    explored = set()
 
     while not frontier.isEmpty():
         current_state, actions, cost_so_far = frontier.pop()
@@ -307,38 +222,19 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
         if cost_so_far > best_cost[current_state]:
             continue
 
-        frontier_before = _frontier_states(frontier)
-        explored.add(current_state)
-        successors = problem.getSuccessors(current_state)
-        h_value = heuristic(current_state, problem)
-
         if problem.isGoalState(current_state):
-            logger.log(current_state, parent_of.get(current_state),
-                       actions[-1] if actions else None,
-                       [s for s, a, c in successors], frontier_before,
-                       _frontier_states(frontier), len(explored),
-                       cost_so_far, h_value)
-            logger.close()
             return actions
 
-        for successor, action, step_cost in successors:
+        for successor, action, step_cost in problem.getSuccessors(current_state):
             new_cost = cost_so_far + step_cost
+
             if successor not in best_cost or new_cost < best_cost[successor]:
                 best_cost[successor] = new_cost
                 new_actions = actions + [action]
                 priority = new_cost + heuristic(successor, problem)
-                parent_of[successor] = current_state
                 frontier.push((successor, new_actions, new_cost), priority)
 
-        logger.log(current_state, parent_of.get(current_state),
-                   actions[-1] if actions else None,
-                   [s for s, a, c in successors], frontier_before,
-                   _frontier_states(frontier), len(explored),
-                   cost_so_far, h_value)
-
-    logger.close()
     return []
-
 
 
 # Abbreviations
