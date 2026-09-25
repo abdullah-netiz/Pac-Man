@@ -8,6 +8,73 @@ Pacman agents (in searchAgents.py).
 """
 
 import util
+import csv
+import os
+
+# ---------------------------------------------------------------------------
+# CSV Trace Logging Helpers
+# ---------------------------------------------------------------------------
+
+# Column header row shared by every trace file
+_TRACE_COLUMNS = [
+    "iteration", "expanded_state", "parent", "action",
+    "generated_successors", "frontier_before", "frontier_after",
+    "explored", "g", "h", "f",
+]
+
+
+def _ensure_evidence_dir():
+    """Create the evidence/ folder next to this module if it does not exist."""
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    evidence_folder = os.path.join(base_path, "evidence")
+    if not os.path.isdir(evidence_folder):
+        os.makedirs(evidence_folder, exist_ok=True)
+    return evidence_folder
+
+
+def _open_trace_file(algorithm_tag):
+    """
+    Open (or overwrite) a CSV trace file for *algorithm_tag* inside evidence/.
+    Returns (csv_writer, file_handle) — caller must close the handle when done.
+    """
+    folder = _ensure_evidence_dir()
+    filepath = os.path.join(folder, "{}_trace.csv".format(algorithm_tag))
+    fh = open(filepath, "w", newline="", encoding="utf-8")
+    writer = csv.writer(fh)
+    writer.writerow(_TRACE_COLUMNS)
+    return writer, fh
+
+
+def _read_stack_states(stack_obj):
+    """Return a list of states currently held in a util.Stack."""
+    return [entry[0] for entry in stack_obj.list]
+
+
+def _read_queue_states(queue_obj):
+    """Return a list of states currently held in a util.Queue."""
+    return [entry[0] for entry in queue_obj.list]
+
+
+def _read_pq_states(pq_obj):
+    """Return a list of states from a util.PriorityQueue.
+    Each heap element is (priority, counter, item). The *item* varies by
+    algorithm — we extract the state portion regardless of tuple length."""
+    result = []
+    for entry in pq_obj.heap:
+        item = entry[2]  # (priority, count, item)
+        if isinstance(item, tuple):
+            result.append(item[0])  # state is always the first element
+        else:
+            result.append(item)
+    return result
+
+
+def _fmt(obj):
+    """Compact string representation safe for CSV cells."""
+    return str(obj)
+
+# ---------------------------------------------------------------------------
+
 
 class SearchProblem:
     """
@@ -73,10 +140,16 @@ def depthFirstSearch(problem: SearchProblem):
     Successors are pushed in reverse order (West→South→East→North) so that
     when popped they follow the mandatory expansion order: North→East→South→West.
     """
+    trace_csv, trace_fh = _open_trace_file("dfs")
+    step_counter = 0
+    # Track which state is the parent for each pushed state
+    parent_map = {}
+
     frontier = util.Stack()
     start = problem.getStartState()
     # Each entry on the stack: (state, actions_to_reach_state)
     frontier.push((start, []))
+    parent_map[start] = (None, None)  # root has no parent or action
     explored = set()
 
     while not frontier.isEmpty():
@@ -86,18 +159,47 @@ def depthFirstSearch(problem: SearchProblem):
         if state in explored:
             continue
 
+        # ---------- trace: capture frontier BEFORE expansion ----------
+        frontier_before_snap = _read_stack_states(frontier)
+
         # Mark as explored upon expansion
         explored.add(state)
+        step_counter += 1
+
+        par_state, par_action = parent_map.get(state, (None, None))
 
         if problem.isGoalState(state):
+            trace_csv.writerow([
+                step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+                "[]", _fmt(frontier_before_snap), _fmt(_read_stack_states(frontier)),
+                _fmt(explored), len(actions), "N/A", "N/A",
+            ])
+            trace_fh.close()
             return actions
 
         # getSuccessors returns [North, South, East, West] by default.
         # Push in reversed order so North is on top and popped first.
-        for successor, action, stepCost in reversed(problem.getSuccessors(state)):
+        children_raw = problem.getSuccessors(state)
+        generated_names = []
+        for successor, action, stepCost in reversed(children_raw):
             if successor not in explored:
                 frontier.push((successor, actions + [action]))
+                # Only record parent if successor was not already tracked
+                if successor not in parent_map:
+                    parent_map[successor] = (state, action)
+                generated_names.append(successor)
 
+        # ---------- trace: capture frontier AFTER expansion ----------
+        frontier_after_snap = _read_stack_states(frontier)
+
+        trace_csv.writerow([
+            step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+            _fmt(generated_names), _fmt(frontier_before_snap),
+            _fmt(frontier_after_snap), _fmt(explored),
+            len(actions), "N/A", "N/A",
+        ])
+
+    trace_fh.close()
     return []
 
 def breadthFirstSearch(problem: SearchProblem):
@@ -110,6 +212,10 @@ def breadthFirstSearch(problem: SearchProblem):
     the explored set.  This guarantees the shallowest (optimal) path is found
     for any unweighted (uniform step-cost) graph.
     """
+    trace_csv, trace_fh = _open_trace_file("bfs")
+    step_counter = 0
+    parent_map = {}
+
     frontier = util.Queue()
     start = problem.getStartState()
 
@@ -118,18 +224,46 @@ def breadthFirstSearch(problem: SearchProblem):
     enqueued = set()
     enqueued.add(start)
     frontier.push((start, []))
+    parent_map[start] = (None, None)
 
     while not frontier.isEmpty():
         state, actions = frontier.pop()
 
+        # ---------- trace: frontier snapshot before expansion ----------
+        frontier_before_snap = _read_queue_states(frontier)
+        step_counter += 1
+
+        par_state, par_action = parent_map.get(state, (None, None))
+
         if problem.isGoalState(state):
+            trace_csv.writerow([
+                step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+                "[]", _fmt(frontier_before_snap),
+                _fmt(_read_queue_states(frontier)),
+                _fmt(enqueued), len(actions), "N/A", "N/A",
+            ])
+            trace_fh.close()
             return actions
 
+        generated_names = []
         for successor, action, stepCost in problem.getSuccessors(state):
             if successor not in enqueued:
                 enqueued.add(successor)
                 frontier.push((successor, actions + [action]))
+                parent_map[successor] = (state, action)
+                generated_names.append(successor)
 
+        # ---------- trace: frontier snapshot after expansion ----------
+        frontier_after_snap = _read_queue_states(frontier)
+
+        trace_csv.writerow([
+            step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+            _fmt(generated_names), _fmt(frontier_before_snap),
+            _fmt(frontier_after_snap), _fmt(enqueued),
+            len(actions), "N/A", "N/A",
+        ])
+
+    trace_fh.close()
     return []
 
 def uniformCostSearch(problem: SearchProblem):
@@ -140,12 +274,17 @@ def uniformCostSearch(problem: SearchProblem):
     If a cheaper path to a state already on the frontier is found, that state's
     priority is updated so the queue always expands the lowest-g node next.
     """
+    trace_csv, trace_fh = _open_trace_file("ucs")
+    step_counter = 0
+    parent_map = {}
+
     frontier = util.PriorityQueue()
     start = problem.getStartState()
     # Item on the queue is the state; path and g-cost are stored alongside.
     frontier.push(start, 0)
     best_g = {start: 0}
     best_actions = {start: []}
+    parent_map[start] = (None, None)
     explored = set()
 
     while not frontier.isEmpty():
@@ -154,11 +293,26 @@ def uniformCostSearch(problem: SearchProblem):
 
         if state in explored:
             continue
+
+        # ---------- trace: frontier snapshot before expansion ----------
+        # For UCS the heap items are plain states, so extract directly
+        frontier_before_snap = [e[2] for e in frontier.heap]
         explored.add(state)
+        step_counter += 1
+
+        par_state, par_action = parent_map.get(state, (None, None))
 
         if problem.isGoalState(state):
+            trace_csv.writerow([
+                step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+                "[]", _fmt(frontier_before_snap),
+                _fmt([e[2] for e in frontier.heap]),
+                _fmt(explored), cost_so_far, "N/A", cost_so_far,
+            ])
+            trace_fh.close()
             return best_actions[state]
 
+        generated_names = []
         for successor, action, step_cost in problem.getSuccessors(state):
             if successor in explored:
                 continue
@@ -168,7 +322,20 @@ def uniformCostSearch(problem: SearchProblem):
                 best_actions[successor] = best_actions[state] + [action]
                 # update() decreases priority if successor is already on the fringe
                 frontier.update(successor, new_cost)
+                parent_map[successor] = (state, action)
+                generated_names.append(successor)
 
+        # ---------- trace: frontier snapshot after expansion ----------
+        frontier_after_snap = [e[2] for e in frontier.heap]
+
+        trace_csv.writerow([
+            step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+            _fmt(generated_names), _fmt(frontier_before_snap),
+            _fmt(frontier_after_snap), _fmt(explored),
+            cost_so_far, "N/A", cost_so_far,
+        ])
+
+    trace_fh.close()
     return []
 
 def nullHeuristic(state, problem=None):
@@ -186,9 +353,17 @@ def greedyBestFirstSearch(problem: SearchProblem, heuristic=nullHeuristic):
     Path cost g(n) is ignored when choosing what to expand next.
     The heuristic is passed in from the command line (e.g. manhattanHeuristic).
     """
+    trace_csv, trace_fh = _open_trace_file("gbfs")
+    step_counter = 0
+    parent_map = {}
+    g_costs = {}  # track path cost for logging even though GBFS ignores it
+
     frontier = util.PriorityQueue()
     start = problem.getStartState()
-    frontier.push((start, []), heuristic(start, problem))
+    h_start = heuristic(start, problem)
+    frontier.push((start, []), h_start)
+    parent_map[start] = (None, None)
+    g_costs[start] = 0
     explored = set()
 
     while not frontier.isEmpty():
@@ -196,23 +371,62 @@ def greedyBestFirstSearch(problem: SearchProblem, heuristic=nullHeuristic):
 
         if state in explored:
             continue
+
+        # ---------- trace: frontier snapshot before expansion ----------
+        frontier_before_snap = _read_pq_states(frontier)
         explored.add(state)
+        step_counter += 1
+
+        par_state, par_action = parent_map.get(state, (None, None))
+        cur_g = g_costs.get(state, len(actions))
+        cur_h = heuristic(state, problem)
+        cur_f = cur_g + cur_h
 
         if problem.isGoalState(state):
+            trace_csv.writerow([
+                step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+                "[]", _fmt(frontier_before_snap),
+                _fmt(_read_pq_states(frontier)),
+                _fmt(explored), cur_g, cur_h, cur_f,
+            ])
+            trace_fh.close()
             return actions
 
+        generated_names = []
         for successor, action, stepCost in problem.getSuccessors(state):
             if successor not in explored:
-                h = heuristic(successor, problem)
-                frontier.push((successor, actions + [action]), h)
+                h_val = heuristic(successor, problem)
+                frontier.push((successor, actions + [action]), h_val)
+                child_g = cur_g + stepCost
+                if successor not in parent_map:
+                    parent_map[successor] = (state, action)
+                    g_costs[successor] = child_g
+                generated_names.append(successor)
 
+        # ---------- trace: frontier snapshot after expansion ----------
+        frontier_after_snap = _read_pq_states(frontier)
+
+        trace_csv.writerow([
+            step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
+            _fmt(generated_names), _fmt(frontier_before_snap),
+            _fmt(frontier_after_snap), _fmt(explored),
+            cur_g, cur_h, cur_f,
+        ])
+
+    trace_fh.close()
     return []
 
 def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
     """Search the node that has the lowest combined cost and heuristic first."""
+    trace_csv, trace_fh = _open_trace_file("astar")
+    step_counter = 0
+    parent_map = {}
+
     frontier = util.PriorityQueue()
     start_state = problem.getStartState()
-    frontier.push((start_state, [], 0), heuristic(start_state, problem))
+    h_start = heuristic(start_state, problem)
+    frontier.push((start_state, [], 0), h_start)
+    parent_map[start_state] = (None, None)
 
     best_cost = {start_state: 0}
 
@@ -222,9 +436,27 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
         if cost_so_far > best_cost[current_state]:
             continue
 
+        # ---------- trace: frontier snapshot before expansion ----------
+        frontier_before_snap = _read_pq_states(frontier)
+        step_counter += 1
+
+        par_state, par_action = parent_map.get(current_state, (None, None))
+        cur_h = heuristic(current_state, problem)
+        cur_f = cost_so_far + cur_h
+
         if problem.isGoalState(current_state):
+            trace_csv.writerow([
+                step_counter, _fmt(current_state),
+                _fmt(par_state), _fmt(par_action),
+                "[]", _fmt(frontier_before_snap),
+                _fmt(_read_pq_states(frontier)),
+                _fmt(set(best_cost.keys())),
+                cost_so_far, cur_h, cur_f,
+            ])
+            trace_fh.close()
             return actions
 
+        generated_names = []
         for successor, action, step_cost in problem.getSuccessors(current_state):
             new_cost = cost_so_far + step_cost
 
@@ -233,7 +465,22 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
                 new_actions = actions + [action]
                 priority = new_cost + heuristic(successor, problem)
                 frontier.push((successor, new_actions, new_cost), priority)
+                parent_map[successor] = (current_state, action)
+                generated_names.append(successor)
 
+        # ---------- trace: frontier snapshot after expansion ----------
+        frontier_after_snap = _read_pq_states(frontier)
+
+        trace_csv.writerow([
+            step_counter, _fmt(current_state),
+            _fmt(par_state), _fmt(par_action),
+            _fmt(generated_names), _fmt(frontier_before_snap),
+            _fmt(frontier_after_snap),
+            _fmt(set(best_cost.keys())),
+            cost_so_far, cur_h, cur_f,
+        ])
+
+    trace_fh.close()
     return []
 
 
