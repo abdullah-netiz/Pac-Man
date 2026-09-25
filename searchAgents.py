@@ -485,8 +485,26 @@ def foodHeuristic(state: Tuple[Tuple, List[List]], problem: FoodSearchProblem):
     problem.heuristicInfo['wallCount']
     """
     position, foodGrid = state
-    "*** YOUR CODE HERE ***"
-    return 0
+    foodList = foodGrid.asList()
+    if not foodList:
+        return 0
+
+    # Cache maze distances between point pairs so repeated heuristic calls
+    # don't re-run BFS for the same two points.
+    if 'distanceCache' not in problem.heuristicInfo:
+        problem.heuristicInfo['distanceCache'] = {}
+    cache = problem.heuristicInfo['distanceCache']
+
+    def getDistance(p1, p2):
+        key = (p1, p2) if p1 <= p2 else (p2, p1)
+        if key not in cache:
+            cache[key] = mazeDistance(p1, p2, problem.startingGameState)
+        return cache[key]
+
+    # Distance to the farthest remaining food dot is admissible (it's a real
+    # maze distance Pacman must cover to reach that dot) and consistent
+    # (it's a true shortest-path cost, so it changes by at most 1 per step).
+    return max(getDistance(position, food) for food in foodList)
 
 class ClosestDotSearchAgent(SearchAgent):
     "Search for all food using a sequence of searches"
@@ -516,8 +534,9 @@ class ClosestDotSearchAgent(SearchAgent):
         walls = gameState.getWalls()
         problem = AnyFoodSearchProblem(gameState)
 
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        # BFS is optimal on this unit-cost maze, so it returns a path to the
+        # *nearest* food dot, not just any reachable dot.
+        return search.bfs(problem)
 
 class AnyFoodSearchProblem(PositionSearchProblem):
     """
@@ -552,8 +571,8 @@ class AnyFoodSearchProblem(PositionSearchProblem):
         """
         x,y = state
 
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        # Goal is reached as soon as Pacman stands on a cell containing food.
+        return self.food[x][y]
 
 def mazeDistance(point1: Tuple[int, int], point2: Tuple[int, int], gameState: pacman.GameState) -> int:
     """
