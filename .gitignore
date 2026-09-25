@@ -20,3 +20,5 @@ env/
 
 # Pac-Man recorded game files
 *.pkl
+*.pdf
+*.patch
