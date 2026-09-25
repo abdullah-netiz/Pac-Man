@@ -484,9 +484,39 @@ def foodHeuristic(state: Tuple[Tuple, List[List]], problem: FoodSearchProblem):
     Subsequent calls to this heuristic can access
     problem.heuristicInfo['wallCount']
     """
-    position, foodGrid = state
-    "*** YOUR CODE HERE ***"
-    return 0
+    currentPosition, remainingFood = state
+
+    foods = remainingFood.asList()
+
+    if len(foods) == 0:
+        return 0
+
+    if "distances" not in problem.heuristicInfo:
+        problem.heuristicInfo["distances"] = {}
+
+    distances = problem.heuristicInfo["distances"]
+
+    def distanceBetween(a, b):
+        pair = tuple(sorted((a, b)))
+
+        if pair not in distances:
+            distances[pair] = mazeDistance(
+                a,
+                b,
+                problem.startingGameState
+            )
+
+        return distances[pair]
+
+    largestDistance = 0
+
+    for foodPosition in foods:
+        d = distanceBetween(currentPosition, foodPosition)
+
+        if d > largestDistance:
+            largestDistance = d
+
+    return largestDistance
 
 class ClosestDotSearchAgent(SearchAgent):
     "Search for all food using a sequence of searches"
@@ -510,14 +540,13 @@ class ClosestDotSearchAgent(SearchAgent):
         Returns a path (a list of actions) to the closest dot, starting from
         gameState.
         """
-        # Here are some useful elements of the startState
-        startPosition = gameState.getPacmanPosition()
-        food = gameState.getFood()
-        walls = gameState.getWalls()
-        problem = AnyFoodSearchProblem(gameState)
+        pacmanPos = gameState.getPacmanPosition()
+        foodGrid = gameState.getFood()
 
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        searchProblem = AnyFoodSearchProblem(gameState)
+
+        path = search.bfs(searchProblem)
+        return path
 
 class AnyFoodSearchProblem(PositionSearchProblem):
     """
@@ -550,10 +579,8 @@ class AnyFoodSearchProblem(PositionSearchProblem):
         The state is Pacman's position. Fill this in with a goal test that will
         complete the problem definition.
         """
-        x,y = state
-
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        row, col = state
+        return self.food[row][col]
 
 def mazeDistance(point1: Tuple[int, int], point2: Tuple[int, int], gameState: pacman.GameState) -> int:
     """
