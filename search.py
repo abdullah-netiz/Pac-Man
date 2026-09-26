@@ -22,6 +22,19 @@ _TRACE_COLUMNS = [
     "explored", "g", "h", "f",
 ]
 
+# When a frontier or explored set exceeds this many entries we log only
+# the size instead of dumping every element.  This keeps the CSV useful
+# for small/medium problems while avoiding the huge serialisation cost
+# that would otherwise make large searches (e.g. FoodSearchProblem on
+# trickySearch) exceed the autograder timeout.
+_SNAPSHOT_CAP = 200
+
+# Maximum number of CSV rows (iterations) to write per search run.
+# After this limit the algorithm keeps running but stops writing trace
+# rows, so large problems (thousands of expansions with complex state
+# objects) are not slowed down by logging overhead.
+_MAX_TRACE_ROWS = 500
+
 
 def _ensure_evidence_dir():
     """Create the evidence/ folder next to this module if it does not exist."""
@@ -72,6 +85,46 @@ def _read_pq_states(pq_obj):
 def _fmt(obj):
     """Compact string representation safe for CSV cells."""
     return str(obj)
+
+
+def _snap_stack(stack_obj):
+    """Return a CSV-safe snapshot of a Stack's states, capped for speed."""
+    n = len(stack_obj.list)
+    if n <= _SNAPSHOT_CAP:
+        return _fmt([entry[0] for entry in stack_obj.list])
+    return "<{} states>".format(n)
+
+
+def _snap_queue(queue_obj):
+    """Return a CSV-safe snapshot of a Queue's states, capped for speed."""
+    n = len(queue_obj.list)
+    if n <= _SNAPSHOT_CAP:
+        return _fmt([entry[0] for entry in queue_obj.list])
+    return "<{} states>".format(n)
+
+
+def _snap_pq(pq_obj):
+    """Return a CSV-safe snapshot of a PriorityQueue, capped for speed."""
+    n = len(pq_obj.heap)
+    if n <= _SNAPSHOT_CAP:
+        return _fmt(_read_pq_states(pq_obj))
+    return "<{} states>".format(n)
+
+
+def _snap_pq_plain(pq_obj):
+    """Snapshot for PQs whose items are plain states (not tuples wrapping
+    state+actions), e.g. UCS."""
+    n = len(pq_obj.heap)
+    if n <= _SNAPSHOT_CAP:
+        return _fmt([e[2] for e in pq_obj.heap])
+    return "<{} states>".format(n)
+
+
+def _snap_set(s):
+    """Return a CSV-safe snapshot of an explored / visited set."""
+    if len(s) <= _SNAPSHOT_CAP:
+        return _fmt(s)
+    return "<{} states>".format(len(s))
 
 # ---------------------------------------------------------------------------
 
@@ -159,8 +212,9 @@ def depthFirstSearch(problem: SearchProblem):
         if state in explored:
             continue
 
+        _do_trace = (step_counter <= _MAX_TRACE_ROWS)
         # ---------- trace: capture frontier BEFORE expansion ----------
-        frontier_before_snap = _read_stack_states(frontier)
+        frontier_before_snap = _snap_stack(frontier) if _do_trace else ""
 
         # Mark as explored upon expansion
         explored.add(state)
@@ -169,10 +223,11 @@ def depthFirstSearch(problem: SearchProblem):
         par_state, par_action = parent_map.get(state, (None, None))
 
         if problem.isGoalState(state):
-            trace_csv.writerow([
+            if _do_trace:
+                trace_csv.writerow([
                 step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-                "[]", _fmt(frontier_before_snap), _fmt(_read_stack_states(frontier)),
-                _fmt(explored), len(actions), "N/A", "N/A",
+                "[]", frontier_before_snap, _snap_stack(frontier),
+                _snap_set(explored), len(actions), "N/A", "N/A",
             ])
             trace_fh.close()
             return actions
@@ -190,12 +245,13 @@ def depthFirstSearch(problem: SearchProblem):
                 generated_names.append(successor)
 
         # ---------- trace: capture frontier AFTER expansion ----------
-        frontier_after_snap = _read_stack_states(frontier)
+        frontier_after_snap = _snap_stack(frontier) if _do_trace else ""
 
-        trace_csv.writerow([
+        if _do_trace:
+            trace_csv.writerow([
             step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-            _fmt(generated_names), _fmt(frontier_before_snap),
-            _fmt(frontier_after_snap), _fmt(explored),
+            _fmt(generated_names), frontier_before_snap,
+            frontier_after_snap, _snap_set(explored),
             len(actions), "N/A", "N/A",
         ])
 
@@ -229,18 +285,20 @@ def breadthFirstSearch(problem: SearchProblem):
     while not frontier.isEmpty():
         state, actions = frontier.pop()
 
+        _do_trace = (step_counter <= _MAX_TRACE_ROWS)
         # ---------- trace: frontier snapshot before expansion ----------
-        frontier_before_snap = _read_queue_states(frontier)
+        frontier_before_snap = _snap_queue(frontier) if _do_trace else ""
         step_counter += 1
 
         par_state, par_action = parent_map.get(state, (None, None))
 
         if problem.isGoalState(state):
-            trace_csv.writerow([
+            if _do_trace:
+                trace_csv.writerow([
                 step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-                "[]", _fmt(frontier_before_snap),
-                _fmt(_read_queue_states(frontier)),
-                _fmt(enqueued), len(actions), "N/A", "N/A",
+                "[]", frontier_before_snap,
+                _snap_queue(frontier),
+                _snap_set(enqueued), len(actions), "N/A", "N/A",
             ])
             trace_fh.close()
             return actions
@@ -254,12 +312,13 @@ def breadthFirstSearch(problem: SearchProblem):
                 generated_names.append(successor)
 
         # ---------- trace: frontier snapshot after expansion ----------
-        frontier_after_snap = _read_queue_states(frontier)
+        frontier_after_snap = _snap_queue(frontier) if _do_trace else ""
 
-        trace_csv.writerow([
+        if _do_trace:
+            trace_csv.writerow([
             step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-            _fmt(generated_names), _fmt(frontier_before_snap),
-            _fmt(frontier_after_snap), _fmt(enqueued),
+            _fmt(generated_names), frontier_before_snap,
+            frontier_after_snap, _snap_set(enqueued),
             len(actions), "N/A", "N/A",
         ])
 
@@ -294,20 +353,22 @@ def uniformCostSearch(problem: SearchProblem):
         if state in explored:
             continue
 
+        _do_trace = (step_counter <= _MAX_TRACE_ROWS)
         # ---------- trace: frontier snapshot before expansion ----------
         # For UCS the heap items are plain states, so extract directly
-        frontier_before_snap = [e[2] for e in frontier.heap]
+        frontier_before_snap = _snap_pq_plain(frontier) if _do_trace else ""
         explored.add(state)
         step_counter += 1
 
         par_state, par_action = parent_map.get(state, (None, None))
 
         if problem.isGoalState(state):
-            trace_csv.writerow([
+            if _do_trace:
+                trace_csv.writerow([
                 step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-                "[]", _fmt(frontier_before_snap),
-                _fmt([e[2] for e in frontier.heap]),
-                _fmt(explored), cost_so_far, "N/A", cost_so_far,
+                "[]", frontier_before_snap,
+                _snap_pq_plain(frontier),
+                _snap_set(explored), cost_so_far, "N/A", cost_so_far,
             ])
             trace_fh.close()
             return best_actions[state]
@@ -326,12 +387,13 @@ def uniformCostSearch(problem: SearchProblem):
                 generated_names.append(successor)
 
         # ---------- trace: frontier snapshot after expansion ----------
-        frontier_after_snap = [e[2] for e in frontier.heap]
+        frontier_after_snap = _snap_pq_plain(frontier) if _do_trace else ""
 
-        trace_csv.writerow([
+        if _do_trace:
+            trace_csv.writerow([
             step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-            _fmt(generated_names), _fmt(frontier_before_snap),
-            _fmt(frontier_after_snap), _fmt(explored),
+            _fmt(generated_names), frontier_before_snap,
+            frontier_after_snap, _snap_set(explored),
             cost_so_far, "N/A", cost_so_far,
         ])
 
@@ -372,8 +434,9 @@ def greedyBestFirstSearch(problem: SearchProblem, heuristic=nullHeuristic):
         if state in explored:
             continue
 
+        _do_trace = (step_counter <= _MAX_TRACE_ROWS)
         # ---------- trace: frontier snapshot before expansion ----------
-        frontier_before_snap = _read_pq_states(frontier)
+        frontier_before_snap = _snap_pq(frontier) if _do_trace else ""
         explored.add(state)
         step_counter += 1
 
@@ -383,11 +446,12 @@ def greedyBestFirstSearch(problem: SearchProblem, heuristic=nullHeuristic):
         cur_f = cur_g + cur_h
 
         if problem.isGoalState(state):
-            trace_csv.writerow([
+            if _do_trace:
+                trace_csv.writerow([
                 step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-                "[]", _fmt(frontier_before_snap),
-                _fmt(_read_pq_states(frontier)),
-                _fmt(explored), cur_g, cur_h, cur_f,
+                "[]", frontier_before_snap,
+                _snap_pq(frontier),
+                _snap_set(explored), cur_g, cur_h, cur_f,
             ])
             trace_fh.close()
             return actions
@@ -404,12 +468,13 @@ def greedyBestFirstSearch(problem: SearchProblem, heuristic=nullHeuristic):
                 generated_names.append(successor)
 
         # ---------- trace: frontier snapshot after expansion ----------
-        frontier_after_snap = _read_pq_states(frontier)
+        frontier_after_snap = _snap_pq(frontier) if _do_trace else ""
 
-        trace_csv.writerow([
+        if _do_trace:
+            trace_csv.writerow([
             step_counter, _fmt(state), _fmt(par_state), _fmt(par_action),
-            _fmt(generated_names), _fmt(frontier_before_snap),
-            _fmt(frontier_after_snap), _fmt(explored),
+            _fmt(generated_names), frontier_before_snap,
+            frontier_after_snap, _snap_set(explored),
             cur_g, cur_h, cur_f,
         ])
 
@@ -436,8 +501,9 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
         if cost_so_far > best_cost[current_state]:
             continue
 
+        _do_trace = (step_counter <= _MAX_TRACE_ROWS)
         # ---------- trace: frontier snapshot before expansion ----------
-        frontier_before_snap = _read_pq_states(frontier)
+        frontier_before_snap = _snap_pq(frontier) if _do_trace else ""
         step_counter += 1
 
         par_state, par_action = parent_map.get(current_state, (None, None))
@@ -445,12 +511,13 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
         cur_f = cost_so_far + cur_h
 
         if problem.isGoalState(current_state):
-            trace_csv.writerow([
+            if _do_trace:
+                trace_csv.writerow([
                 step_counter, _fmt(current_state),
                 _fmt(par_state), _fmt(par_action),
-                "[]", _fmt(frontier_before_snap),
-                _fmt(_read_pq_states(frontier)),
-                _fmt(set(best_cost.keys())),
+                "[]", frontier_before_snap,
+                _snap_pq(frontier),
+                _snap_set(set(best_cost.keys())),
                 cost_so_far, cur_h, cur_f,
             ])
             trace_fh.close()
@@ -469,14 +536,15 @@ def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
                 generated_names.append(successor)
 
         # ---------- trace: frontier snapshot after expansion ----------
-        frontier_after_snap = _read_pq_states(frontier)
+        frontier_after_snap = _snap_pq(frontier) if _do_trace else ""
 
-        trace_csv.writerow([
+        if _do_trace:
+            trace_csv.writerow([
             step_counter, _fmt(current_state),
             _fmt(par_state), _fmt(par_action),
-            _fmt(generated_names), _fmt(frontier_before_snap),
-            _fmt(frontier_after_snap),
-            _fmt(set(best_cost.keys())),
+            _fmt(generated_names), frontier_before_snap,
+            frontier_after_snap,
+            _snap_set(set(best_cost.keys())),
             cost_so_far, cur_h, cur_f,
         ])
 
